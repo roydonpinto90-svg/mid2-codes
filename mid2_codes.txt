@@ -1,0 +1,385 @@
+# ==========================================================
+# MID TERM 2 - ALL CODES (Pipeline+KNN, Naive Bayes, Random Forest, XGBoost)
+# Copy each CELL into its own Jupyter cell and run top to bottom.
+# ==========================================================
+
+
+# ===== CELL 1 - IMPORT LIBRARIES =====
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.datasets import load_iris, fetch_20newsgroups
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
+from sklearn.preprocessing import StandardScaler, normalize, LabelEncoder
+from sklearn.decomposition import PCA
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.naive_bayes import GaussianNB, MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier, plot_importance
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+import warnings
+warnings.filterwarnings("ignore")
+
+# if xgboost is missing, run this in its own cell:  !pip install xgboost
+
+
+# ==========================================================
+# PART 1 - PIPELINE USING KNN  (MOST IMPORTANT)
+# ==========================================================
+
+# ===== CELL 2 - LOAD DATA =====
+data = load_iris()
+X, y = data.data, data.target
+labels = data.target_names
+
+# ===== CELL 3 - BUILD PIPELINE (scale -> reduce -> classify) =====
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('pca', PCA(n_components=2)),
+    ('knn', KNeighborsClassifier(n_neighbors=5))
+])
+
+# ===== CELL 4 - SPLIT DATA (stratify keeps class proportions) =====
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# ===== CELL 5 - FIT PIPELINE =====
+pipeline.fit(X_train, y_train)
+
+# ===== CELL 6 - ACCURACY =====
+test_score = pipeline.score(X_test, y_test)
+print("Pipeline test accuracy:", round(test_score, 3))
+
+# ===== CELL 7 - CONFUSION MATRIX =====
+y_pred = pipeline.predict(X_test)
+cm = confusion_matrix(y_test, y_pred)
+
+plt.figure()
+sns.heatmap(cm, annot=True, cmap='Blues', fmt='d',
+            xticklabels=labels, yticklabels=labels)
+plt.title("Classification Pipeline Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.tight_layout()
+plt.show()
+
+# ===== CELL 8 - PIPELINE WITHOUT FIXED SETTINGS (for GridSearch) =====
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('pca', PCA()),
+    ('knn', KNeighborsClassifier())
+])
+
+# ===== CELL 9 - SETTINGS TO TRY (stepname + double underscore + parameter) =====
+param_grid = {
+    'pca__n_components': [2, 3],
+    'knn__n_neighbors': [3, 5, 6]
+}
+
+# ===== CELL 10 - CROSS VALIDATION METHOD =====
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# ===== CELL 11 - GRID SEARCH =====
+best_model = GridSearchCV(estimator=pipeline, param_grid=param_grid,
+                          cv=cv, scoring='accuracy', verbose=2)
+best_model.fit(X_train, y_train)
+
+# ===== CELL 12 - RESULTS =====
+print("Best parameters :", best_model.best_params_)
+print("Best CV accuracy:", round(best_model.best_score_, 4))
+print("Test accuracy   :", round(best_model.score(X_test, y_test), 3))
+
+# ===== CELL 13 - CONFUSION MATRIX + REPORT OF TUNED MODEL =====
+y_pred = best_model.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+
+# ==========================================================
+# PART 2 - NAIVE BAYES
+# ==========================================================
+
+# ----- 2A. GAUSSIAN NB ON IRIS (continuous numbers) -----
+
+# ===== CELL 14 =====
+iris = load_iris()
+X = iris.data
+y = iris.target
+
+# ===== CELL 15 =====
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# ===== CELL 16 =====
+model = GaussianNB()
+model.fit(X_train, y_train)
+
+# ===== CELL 17 =====
+y_pred = model.predict(X_test)
+print(f"Accuracy: {accuracy_score(y_test, y_pred)*100:.2f}%")
+print("\nClassification Report:\n",
+      classification_report(y_test, y_pred, target_names=iris.target_names))
+print(confusion_matrix(y_test, y_pred))
+
+
+# ----- 2B. GAUSSIAN NB ON CREDIT CARD (imbalanced data) -----
+
+# ===== CELL 18 =====
+raw_data = pd.read_csv('creditcard(in).csv')
+raw_data.tail()
+
+# ===== CELL 19 - SCALE AND NORMALIZE =====
+raw_data.iloc[:, 1:30] = StandardScaler().fit_transform(raw_data.iloc[:, 1:30])
+data_matrix = raw_data.values
+
+X = data_matrix[:, 1:30]      # exclude Time
+y = data_matrix[:, 30]        # Class (0 normal, 1 fraud)
+
+X = normalize(X, norm='l1')
+
+# ===== CELL 20 =====
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# ===== CELL 21 =====
+model = GaussianNB()
+model.fit(X_train, y_train)
+
+# ===== CELL 22 =====
+y_pred = model.predict(X_test)
+print(f"Accuracy: {accuracy_score(y_test, y_pred)*100:.2f}%")
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+print(confusion_matrix(y_test, y_pred))
+# NOTE: accuracy is misleading here (fraud is tiny). Look at precision/recall of class 1.
+
+
+# ----- 2C. MULTINOMIAL NB vs LOGISTIC REGRESSION (sentiment text) -----
+
+# ===== CELL 23 =====
+data = {
+    'text': [
+        "I absolutely love this product, it works perfectly!",
+        "This is the worst purchase I have ever made.",
+        "It's okay, nothing special but does the job.",
+        "Fantastic customer service and beautiful design.",
+        "Horrible quality, it broke on the first day.",
+        "I am highly satisfied with the fast shipping.",
+        "Waste of money. Do not buy this product.",
+        "Pretty good value for the price, I recommend it.",
+        "Item arrived late and the product was damaged, very disappointed."
+    ],
+    'sentiment': ['positive', 'negative', 'neutral', 'positive', 'negative',
+                  'positive', 'negative', 'positive', 'negative']
+}
+df = pd.DataFrame(data)
+
+# ===== CELL 24 =====
+X = df['text']
+y = df['sentiment']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# ===== CELL 25 - TEXT TO NUMBERS (TF-IDF) =====
+vectorizer = TfidfVectorizer(stop_words='english', lowercase=True)
+X_train_vec = vectorizer.fit_transform(X_train)    # learn vocabulary from train only
+X_test_vec = vectorizer.transform(X_test)          # only apply on test
+
+# ===== CELL 26 =====
+lr_model = LogisticRegression()
+lr_model.fit(X_train_vec, y_train)
+
+nb_model = MultinomialNB()
+nb_model.fit(X_train_vec, y_train)
+
+# ===== CELL 27 =====
+lr_preds = lr_model.predict(X_test_vec)
+nb_preds = nb_model.predict(X_test_vec)
+
+print("Model Accuracy Comparison")
+print(f"Logistic Regression Accuracy: {accuracy_score(y_test, lr_preds)*100:.2f}%")
+print(f"Multinomial NB Accuracy     : {accuracy_score(y_test, nb_preds)*100:.2f}%")
+
+# ===== CELL 28 - PREDICT NEW SENTENCES =====
+def predict_sentiment(new_texts):
+    new_vec = vectorizer.transform(new_texts)
+    lr_p = lr_model.predict(new_vec)
+    nb_p = nb_model.predict(new_vec)
+    print("Testing Custom Input")
+    for text, a, b in zip(new_texts, lr_p, nb_p):
+        print(f"Text: '{text}'")
+        print(f"  LR: {a.upper()}")
+        print(f"  NB: {b.upper()}\n")
+
+predict_sentiment([
+    "The item arrived broken and late.",
+    "It works incredibly well, love it!",
+    "Looks good"
+])
+
+
+# ----- 2D. MULTINOMIAL NB ON 20 NEWSGROUPS (needs internet) -----
+
+# ===== CELL 29 =====
+newsgroups = fetch_20newsgroups(subset='all')
+X, y = newsgroups.data, newsgroups.target
+
+# ===== CELL 30 =====
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# ===== CELL 31 =====
+vectorizer = TfidfVectorizer(stop_words='english', max_df=0.5)
+X_train_tfidf = vectorizer.fit_transform(X_train)
+X_test_tfidf = vectorizer.transform(X_test)
+
+# ===== CELL 32 =====
+nb_classifier = MultinomialNB()
+nb_classifier.fit(X_train_tfidf, y_train)
+
+# ===== CELL 33 =====
+y_pred = nb_classifier.predict(X_test_tfidf)
+print(f"Accuracy: {accuracy_score(y_test, y_pred)}")
+print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=newsgroups.target_names)}")
+
+
+# ==========================================================
+# PART 3 - RANDOM FOREST (no scaling needed, tree based)
+# ==========================================================
+
+# ===== CELL 34 =====
+data = load_iris()
+X = data.data
+y = data.target
+
+# ===== CELL 35 =====
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.35, random_state=42)
+
+# ===== CELL 36 =====
+rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_classifier.fit(X_train, y_train)
+
+# ===== CELL 37 =====
+y_pred = rf_classifier.predict(X_test)
+print(f"Accuracy: {accuracy_score(y_test, y_pred):.2f}")
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+print(confusion_matrix(y_test, y_pred))
+
+
+# ==========================================================
+# PART 4 - XGBOOST (no scaling needed, tree based)
+# ==========================================================
+
+# ===== CELL 38 =====
+iris = load_iris()
+X = iris.data
+y = iris.target
+feature_names = iris.feature_names
+target_names = iris.target_names
+
+# DataFrame so XGBoost shows real feature names
+X_df = pd.DataFrame(X, columns=feature_names)
+
+# ===== CELL 39 =====
+X_train, X_test, y_train, y_test = train_test_split(X_df, y, test_size=0.3, random_state=42)
+
+# ===== CELL 40 =====
+model = XGBClassifier(
+    objective='multi:softprob',
+    num_class=3,
+    random_state=42,
+    eval_metric='mlogloss'
+)
+model.fit(X_train, y_train)
+
+# ===== CELL 41 =====
+y_pred = model.predict(X_test)
+print(f"XGBoost Accuracy: {accuracy_score(y_test, y_pred)*100:.2f}%")
+print("Classification Report:\n",
+      classification_report(y_test, y_pred, target_names=target_names))
+
+# ===== CELL 42 - CONFUSION MATRIX =====
+cm = confusion_matrix(y_test, y_pred)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=target_names, yticklabels=target_names)
+plt.title("XGBoost Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+
+# ===== CELL 43 - FEATURE IMPORTANCE =====
+plot_importance(model, importance_type='weight', grid=False, color='skyblue')
+plt.title("XGBoost Feature Importance")
+plt.show()
+
+
+# ==========================================================
+# PART 5 - RANDOM FOREST vs XGBOOST + CROSS VALIDATION (ChurnData)
+# ==========================================================
+
+# ===== CELL 44 =====
+df = pd.read_excel('ChurnData.xlsx')
+df.head()
+
+# ===== CELL 45 - PREPROCESSING =====
+target_col = 'churn'
+df = df.dropna()
+
+le = LabelEncoder()
+for col in df.select_dtypes(include=['object']).columns:
+    df[col] = le.fit_transform(df[col])
+
+# ===== CELL 46 - SPLIT =====
+X = df.drop(columns=[target_col])
+y = df[target_col]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# ===== CELL 47 - MODELS =====
+models = {
+    "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+    "XGBoost": XGBClassifier(n_estimators=100, learning_rate=0.1,
+                             random_state=42, eval_metric='logloss')
+}
+
+# ===== CELL 48 - FIT, EVALUATE, CROSS VALIDATE, FEATURE IMPORTANCE =====
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+for name, model in models.items():
+    print("\n" + "=" * 50)
+    print(f"MODEL: {name}")
+    print("=" * 50)
+
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    print("\n[Classification Report]")
+    print(classification_report(y_test, y_pred))
+
+    print("[Confusion Matrix]")
+    print(confusion_matrix(y_test, y_pred))
+
+    cv_scores = cross_val_score(model, X_train, y_train, cv=kf, scoring='accuracy')
+    print("\n[5-Fold Cross-Validation]")
+    print(f"Scores per fold: {cv_scores}")
+    print(f"Mean Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std()*2:.4f})")
+
+    print("\n[Top 5 Important Features]")
+    importances = model.feature_importances_
+    indices = np.argsort(importances)[::-1]
+    for i in range(min(5, len(X.columns))):
+        print(f"{i+1}. {X.columns[indices[i]]}: {importances[indices[i]]:.4f}")
+
+
+# ==========================================================
+# QUICK MEMORY
+# Pipeline + KNN : scaling YES   | chain of steps, tune with GridSearchCV
+# Naive Bayes    : scaling no    | probability + independence (Gaussian = numbers, Multinomial = text)
+# Random Forest  : scaling NO    | many trees, majority vote (bagging)
+# XGBoost        : scaling NO    | trees built one after another, each fixes previous errors (boosting)
+# ==========================================================
